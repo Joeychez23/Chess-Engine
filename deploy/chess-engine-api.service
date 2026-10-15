@@ -1,0 +1,26 @@
+# systemd unit for the Chess Engine API
+# Install: sudo cp deploy/chess-engine-api.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now chess-engine-api
+
+[Unit]
+Description=Chess Engine API (Stockfish)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/chess-engine-api
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Environment=STOCKFISH_PATH=/usr/local/bin/stockfish
+Environment=ALLOWED_ORIGINS=https://chess.aws-prac-route53.com
+# Environment=ENGINES=2
+# Environment=HASH_MB=64
+
+[Install]
+WantedBy=multi-user.target
