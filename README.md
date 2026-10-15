@@ -172,7 +172,12 @@ resolve first. Check with `dig +short engine.aws-prac-route53.com`.
 ssh -i ~/path/to/key.pem ubuntu@<elastic-ip>
 
 sudo apt update
-sudo apt install -y build-essential git nginx certbot python3-certbot-nginx rsync
+sudo apt install build-essential
+sudo apt install make
+# Depends on build type.
+sudo snap install zig --classic --edge
+# (If Error) sudo lsof -i :PORT_NUMBER
+sudo apt install -y qemu-user
 
 # Node 22 from NodeSource (Ubuntu's own nodejs package is older)
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -187,9 +192,9 @@ Pick the latest release tag from the
 (e.g. `sf_17.1`), so the engine doesn't change under you.
 
 ```bash
-git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git
+git clone https://github.com/official-stockfish/Stockfish.git
 cd Stockfish/src
-make -j"$(nproc)" profile-build ARCH=armv8-dotprod
+make -j profile-build ARCH=x86-64
 sudo cp stockfish /usr/local/bin/stockfish
 printf 'uci\nquit\n' | stockfish | head -n 1   # "Stockfish 17.1 by the Stockfish developers..."
 ```
