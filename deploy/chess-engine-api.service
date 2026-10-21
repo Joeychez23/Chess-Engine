@@ -8,14 +8,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=root
 WorkingDirectory=/opt/chess-engine-api
-ExecStart=/usr/bin/node server.js
+ExecStart=/usr/local/bin/node24 server.js
 Restart=always
 RestartSec=5
 
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=3001
 Environment=HOST=127.0.0.1
 Environment=STOCKFISH_PATH=/usr/local/bin/stockfish
 Environment=ALLOWED_ORIGINS=https://chess.aws-prac-route53.com

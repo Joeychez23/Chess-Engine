@@ -17,7 +17,7 @@ const { WebSocketServer } = require('ws');
 const { Chess } = require('chess.js');
 const { parseInfo, toResponse } = require('./format.js');
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 3001;
 const HOST = process.env.HOST || '127.0.0.1'; // only nginx should reach the app
 const STOCKFISH = process.env.STOCKFISH_PATH || '/usr/local/bin/stockfish';
 const ENGINES = Number(process.env.ENGINES) || os.cpus().length;
@@ -28,6 +28,9 @@ const MAX_DEPTH = 20;
 const MAX_TIME_MS = 5000;
 const MAX_VARIANTS = 5;
 const MAX_QUEUE = 50;
+const MAX_SKILL = 20; // Skill Level 20 = full strength
+const MIN_ELO = 1320; // UCI_Elo range in Stockfish 16+
+const MAX_ELO = 3190;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Number(n) || lo));
 
@@ -86,11 +89,11 @@ class Engine {
 
 	/**
 	 * @description searches one position
-	 * @param  {[object]}   opts   [{ fen, depth, movetime, variants, searchmoves }]
+	 * @param  {[object]}   opts   [{ fen, depth, movetime, variants, searchmoves, skillLevel, elo }]
 	 * @param  {[function]} onInfo [called with every parsed info line]
-	 * @return {[Promise]} the deepest line per variant, best first
+	 * @return {[Promise]} { lines: the deepest line per variant, best first, bestmove: the move Stockfish played }
 	 */
-	search({ fen, depth, movetime, variants, searchmoves }, onInfo) {
+	search({ fen, depth, movetime, variants, searchmoves, skillLevel, elo }, onInfo) {
 		return new Promise((resolve, reject) => {
 			const lines = {};
 			this.fail = reject;
@@ -101,10 +104,17 @@ class Engine {
 					onInfo(info);
 				} else if (line.startsWith('bestmove')) {
 					this.onLine = this.fail = null;
-					resolve(Object.values(lines).sort((a, b) => a.multipv - b.multipv));
+					resolve({
+						lines: Object.values(lines).sort((a, b) => a.multipv - b.multipv),
+						bestmove: line.split(' ')[1], // with a skill level / elo this can be a weaker move than lines[0]
+					});
 				}
 			};
 			this.send('ucinewgame');
+			// set on every search: engines are reused, so one request's strength can't carry over to the next
+			this.send(`setoption name UCI_LimitStrength value ${elo ? 'true' : 'false'}`);
+			if (elo) this.send(`setoption name UCI_Elo value ${elo}`);
+			this.send(`setoption name Skill Level value ${skillLevel}`);
 			this.send(`setoption name MultiPV value ${variants}`);
 			this.send(`position fen ${fen}`);
 			this.send(`go depth ${depth} movetime ${movetime}${searchmoves ? ` searchmoves ${searchmoves}` : ''}`);
@@ -148,18 +158,25 @@ async function analyse(body, onUpdate = () => { }) {
 		variants: clamp(body.variants ?? 1, 1, MAX_VARIANTS),
 		searchmoves: String(body.searchmoves ?? '').split(/\s+/)
 			.filter((m) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(m)).join(' '),
+		skillLevel: clamp(body.skillLevel ?? MAX_SKILL, 0, MAX_SKILL),
+		elo: body.elo == null ? null : clamp(body.elo, MIN_ELO, MAX_ELO),
 	};
 
 	const engine = await acquire();
 	try {
-		const lines = await engine.search(opts, (info) => {
+		const { lines, bestmove } = await engine.search(opts, (info) => {
 			try {
 				onUpdate(toResponse(fen, info, 'move'));
 			} catch { } // skip a partial line rather than crash the stream
 		});
-		if (!lines.length) return { type: 'info', text: 'No legal moves (game over).' };
-		const out = lines.map((line) => toResponse(fen, line, 'bestmove'));
-		return opts.variants === 1 ? out[0] : out;
+		if (!lines.length || bestmove === '(none)') return { type: 'info', text: 'No legal moves (game over).' };
+		if (opts.variants === 1) {
+			// a weaker pick isn't one of the printed lines, so it has no score of its own
+			const played = lines.find((line) => line.pv[0] === bestmove)
+				?? { depth: lines[0].depth, multipv: 1, cp: null, mate: null, pv: [bestmove] };
+			return toResponse(fen, played, 'bestmove');
+		}
+		return lines.map((line) => toResponse(fen, line, 'bestmove'));
 	} catch (err) {
 		return { type: 'info', text: err.message };
 	} finally {

@@ -50,14 +50,16 @@ function toResponse(fen, info, type) {
 	const uci = info.pv[0];
 	const move = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
 
-	const evaluation = mate !== null ? Math.sign(mate) * 100 : cp / 100;
-	const winChance = mate !== null
-		? (mate > 0 ? 100 : 0)
-		: 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1); // Lichess formula
-	const leader = evaluation > 0.5 ? 'White is winning'
-		: evaluation < -0.5 ? 'Black is winning'
-			: 'The game is balanced';
-	const score = mate !== null ? `mate in ${Math.abs(mate)}` : evaluation;
+	const scored = cp !== null || mate !== null; // a skill level's weaker pick comes without a score
+	const evaluation = !scored ? null : mate !== null ? Math.sign(mate) * 100 : cp / 100;
+	const winChance = !scored ? null
+		: mate !== null ? (mate > 0 ? 100 : 0)
+			: 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1); // Lichess formula
+	const leader = !scored ? 'Picked by skill level'
+		: evaluation > 0.5 ? 'White is winning'
+			: evaluation < -0.5 ? 'Black is winning'
+				: 'The game is balanced';
+	const score = !scored ? '?' : mate !== null ? `mate in ${Math.abs(mate)}` : evaluation;
 
 	return {
 		type,

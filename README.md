@@ -6,7 +6,8 @@ Use HTTP POST for a single answer, or a WebSocket to watch the search get deeper
 
 It runs Stockfish built from the
 [official GitHub repo](https://github.com/official-stockfish/Stockfish) on an
-EC2 instance, behind nginx with a free Let's Encrypt certificate.
+EC2 instance, behind nginx with a free Let's Encrypt certificate. Stockfish is
+GPL v3 licensed, see [Stockfish license](#stockfish-license).
 
 Built with Node.js, [Express](https://expressjs.com/),
 [ws](https://github.com/websockets/ws),
@@ -28,13 +29,17 @@ The Node server is the bridge between that and HTTP.
 2. **Queue.** The server starts one single-threaded Stockfish per vCPU. A
    request takes an idle one, or waits in line. If more than 50 requests are
    waiting, new ones get `Server busy`.
-3. **Search.** The server sends Stockfish `ucinewgame`,
-   `setoption name MultiPV value <variants>`, `position fen <fen>`, then
+3. **Search.** The server sends Stockfish `ucinewgame`, the strength options
+   (`UCI_LimitStrength`, `UCI_Elo`, `Skill Level`, set on every search so one
+   request's strength never carries over to the next), then
+   `setoption name MultiPV value <variants>`, `position fen <fen>`, and
    `go depth <depth> movetime <ms> [searchmoves ...]`. Stockfish stops at the
    depth or the time limit, whichever comes first.
 4. **Format.** Each `info ... pv ...` line Stockfish prints becomes a `move`
-   message (streamed over WebSocket). The final `bestmove` becomes the
-   `bestmove` response. Scores are flipped to White's point of view, the way
+   message (streamed over WebSocket). The move on Stockfish's final
+   `bestmove` line becomes the `bestmove` response. With a skill level or Elo
+   that can be a weaker move than the top analysis line, and then it has no
+   score (`eval`, `centipawns` and `winChance` are `null`). Scores are flipped to White's point of view, the way
    chess-api.com reports them. `winChance` uses Lichess's formula, and `san`,
    `flags`, `piece` and the rest come from chess.js.
 5. **Recover.** If a Stockfish process dies, the request it was working on gets
@@ -59,6 +64,8 @@ curl -s https://engine.aws-prac-route53.com/v1 \
 | `maxThinkingTime` | 1000 | 5000 | Time limit in ms. The search stops at `depth` or this, whichever comes first. |
 | `variants` | 1 | 5 | Number of lines to return. With more than 1, the response is an array, best line first. |
 | `searchmoves` | `''` | | Only consider these moves, e.g. `"d2d4 e2e4"`. |
+| `skillLevel` | 20 | 20 | Stockfish's `Skill Level`, 0-20. Below 20 it sometimes plays a weaker move on purpose. |
+| `elo` | | 3190 | Play at about this Elo (min 1320). Turns on `UCI_LimitStrength` + `UCI_Elo` and overrides `skillLevel`. Stockfish's ratings are anchored to the CCRL engine rating list, not human ratings. |
 | `taskId` | | | Copied onto every WebSocket message so you can match replies to requests. |
 
 Response (`captured` appears only when the move takes a piece):
@@ -189,10 +196,11 @@ node -v
 
 Pick the latest release tag from the
 [releases page](https://github.com/official-stockfish/Stockfish/releases)
-(e.g. `sf_17.1`), so the engine doesn't change under you.
+(e.g. `sf_17.1`), so the engine doesn't change under you. If you pick a newer
+one, change `sf_17.1` here and in [Stockfish license](#stockfish-license).
 
 ```bash
-git clone https://github.com/official-stockfish/Stockfish.git
+git clone --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git
 cd Stockfish/src
 make -j profile-build ARCH=x86-64
 sudo cp stockfish /usr/local/bin/stockfish
@@ -268,23 +276,19 @@ journalctl -u chess-engine-api -f
 
 ## Using it from chess-frontend
 
-[`ai/index.js`](../chess-frontend/client/src/js/gameplay/ai/index.js) already
-has a commented-out `postChessApi`. Point its URL at
-`https://engine.aws-prac-route53.com/v1` and replace the js-chess-engine call:
+The chess server calls it, not the browser:
+[`server/utils/ai.js`](../chess-frontend/server/utils/ai.js) sends each AI
+move's FEN with the game's level (`elo` or `skillLevel`, plus `depth` and
+`maxThinkingTime`) and saves the move it gets back. Set `ENGINE_URL` in the
+chess server's `.env` to point it somewhere else.
 
-```js
-export async function playAi(chessInst) {
-	const { from, to, promotion } = await postChessApi({ fen: chessInst.fen(), depth: 12 });
-	return promotion ? { from, to, promotion } : { from, to };
-}
-```
+Stockfish picks a skill-level move at depth `1 + skill level`, so the chess
+server stops the search there (`depth`) instead of letting it use all of
+`maxThinkingTime`. Only the full-strength level searches to depth 20.
 
-`playAi` becomes async, so whatever calls it needs to `await` it. The response
-includes the promotion piece, so the js-chess-engine promotion workaround can go.
-
-Stockfish at depth 12 is far stronger than js-chess-engine level 1. To make it
-beatable, add a field that sends `setoption name Skill Level value <0-20>`
-before the search.
+Every AI move now comes from the chess server's IP, so the nginx limit of
+5 requests per second per IP is shared by all players. If many people play
+at once, raise it or exempt the chess server's IP in `deploy/nginx.conf`.
 
 ## Configuration
 
@@ -307,3 +311,30 @@ format.js                        Stockfish output -> chess-api.com response
 deploy/chess-engine-api.service  systemd unit
 deploy/nginx.conf                nginx site (proxy, WebSockets, rate limit)
 ```
+
+## Stockfish license
+
+[Stockfish](https://stockfishchess.org/) is free software by
+[the Stockfish developers](https://github.com/official-stockfish/Stockfish/blob/sf_17.1/AUTHORS),
+distributed under the
+[GNU General Public License version 3](https://github.com/official-stockfish/Stockfish/blob/sf_17.1/Copying.txt)
+(GPL v3). Whenever Stockfish is distributed, the license and the full source
+code (or a link to it) for that exact binary have to go with it, and any
+changes to its source have to be released under GPL v3 too.
+
+- **Source:** the engine is built, unmodified, from the official
+  [`sf_17.1` tag](https://github.com/official-stockfish/Stockfish/tree/sf_17.1)
+  (see [Build Stockfish](#4-build-stockfish)). Its license is `Copying.txt` in
+  that source.
+- **This repo doesn't include Stockfish.** No Stockfish code or binary is
+  committed here. `server.js` starts the Stockfish program installed at
+  `STOCKFISH_PATH` and talks to it over stdin/stdout with UCI, the same way a
+  chess GUI does.
+- **The API doesn't distribute Stockfish.** The binary stays on the EC2
+  instance, and callers only get its moves back. GPL v3 doesn't count letting
+  people use a program over a network, without giving them a copy, as
+  distributing it.
+- **If you do distribute it** (a binary download, or a Docker image or AMI
+  with Stockfish in it), include `Copying.txt` and the source, or a link to the
+  exact tag it was built from. If you change Stockfish's source, publish those
+  changes under GPL v3.
