@@ -170,8 +170,8 @@ These steps set up a new x86 instance from the `Basic-Nginx-26` AMI (Ubuntu
 with nginx) for `engine.aws-prac-route53.com`. The chess server runs on the
 same instance, so once the engine works, continue with
 [chess-frontend's Deploy](../chess-frontend/README.md#deploy). Run its
-Terraform before step 1: it creates the instance's IAM role and the `chess` and
-`engine` DNS records.
+Terraform before step 1: it manages the instance's IAM role and the `chess` and
+`engine` DNS records. This repo has no Terraform of its own.
 
 ### 1. Launch the instance
 
@@ -189,7 +189,7 @@ Terraform before step 1: it creates the instance's IAM role and the `chess` and
   one-time spot request terminates the instance and deletes its disk instead.
   While a spot instance is stopped, the whole site (chess and engine) is down,
   so use on-demand if it has to stay up.
-- **IAM instance profile:** `chess-server` (from chess-frontend's Terraform).
+- **IAM instance profile:** `EC2_Chess_DynamoDB` (managed by chess-frontend's Terraform).
   The chess server uses it for DynamoDB. The engine needs no AWS permissions.
 - **Security group:** port 22 from your IP only, ports 80 and 443 from
   anywhere. Don't open 3001 or 8080: nginx is the only way in. The engine also
@@ -272,23 +272,26 @@ minutes but makes a faster engine than plain `build`.
 
 ### 5. Deploy the app
 
-From your Mac, in this folder:
-
-```bash
-ssh -i ~/path/to/key.pem ubuntu@<elastic-ip> 'sudo mkdir -p /opt/chess-engine-api && sudo chown ubuntu: /opt/chess-engine-api'
-rsync -av --exclude node_modules --exclude .git -e "ssh -i ~/path/to/key.pem" ./ ubuntu@<elastic-ip>:/opt/chess-engine-api/
-```
-
 On the instance:
 
 ```bash
-cd /opt/chess-engine-api
+cd /opt
+sudo git clone https://github.com/Joeychez23/Chess-Engine.git
+sudo mv Chess-Engine chess-engine-api
+sudo chown -R ubuntu: chess-engine-api
+cd chess-engine-api
 npm ci --omit=dev
 sudo cp deploy/chess-engine-api.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now chess-engine-api
 curl -s localhost:3001/health
 ```
+
+The repo is `Chess-Engine` on GitHub, but the service runs from
+`/opt/chess-engine-api` (`WorkingDirectory` in
+`deploy/chess-engine-api.service`), hence the `mv`. `/opt` belongs to root, so
+the clone needs `sudo`. The `chown` hands the folder to `ubuntu`: `npm` comes
+from nvm, which `sudo` can't find, so `npm ci` and `git pull` run as `ubuntu`.
 
 `/health` should show `"engines": 2` on a `t3.medium`. The service runs with
 `Nice=10`, so the chess server gets the CPU first when both are busy.
@@ -336,12 +339,10 @@ Next, set up the chess server on this instance:
 
 ### Updating and logs
 
-```bash
-# from your Mac
-rsync -av --exclude node_modules --exclude .git -e "ssh -i ~/path/to/key.pem" ./ ubuntu@<elastic-ip>:/opt/chess-engine-api/
+On the instance, after pushing to GitHub:
 
-# on the instance
-cd /opt/chess-engine-api && npm ci --omit=dev && sudo systemctl restart chess-engine-api
+```bash
+cd /opt/chess-engine-api && git pull && npm ci --omit=dev && sudo systemctl restart chess-engine-api
 journalctl -u chess-engine-api -f
 ```
 
