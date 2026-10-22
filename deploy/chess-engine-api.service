@@ -13,11 +13,14 @@ WorkingDirectory=/opt/chess-engine-api
 ExecStart=/usr/local/bin/node24 server.js
 Restart=always
 RestartSec=5
+# Lower CPU priority (Stockfish inherits it), so the chess server on the same instance stays responsive while level 8 thinks
+Nice=10
 
 Environment=NODE_ENV=production
 Environment=PORT=3001
 Environment=HOST=127.0.0.1
 Environment=STOCKFISH_PATH=/usr/local/bin/stockfish
+# Only browsers check this (CORS / WebSocket). The chess server calls http://127.0.0.1:3001 directly
 Environment=ALLOWED_ORIGINS=https://chess.aws-prac-route53.com
 # Environment=ENGINES=2
 # Environment=HASH_MB=64
